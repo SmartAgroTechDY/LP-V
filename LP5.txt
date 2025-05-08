@@ -1,0 +1,360 @@
+1.Design and implement Parallel Breadth First Search and Depth First Search based on existing algorithms using OpenMP. Use a Tree or an undirected graph for BFS and DFS .
+
+#include <iostream>
+#include <vector>
+#include <queue>
+#include <omp.h>
+
+#define MAX_NODES 10
+
+using namespace std;
+
+vector<vector<int>> adj(MAX_NODES, vector<int>(MAX_NODES, 0));
+vector<int> visited(MAX_NODES, 0);
+
+void bfs_parallel(int start, int n) {
+    queue<int> q;
+    vector<int> level(n, -1);
+    visited[start] = 1;
+    level[start] = 0;
+    q.push(start);
+
+    while (!q.empty()) {
+        int u = q.front(); q.pop();
+        cout << u << " ";
+
+        #pragma omp parallel for
+        for (int v = 0; v < n; ++v) {
+            if (adj[u][v] && !visited[v]) {
+                visited[v] = 1;
+                level[v] = level[u] + 1;
+
+                #pragma omp critical
+                q.push(v);
+            }
+        }
+    }
+}
+
+void dfs_parallel(int node, int n) {
+    visited[node] = 1;
+    cout << node << " ";
+
+    #pragma omp parallel for
+    for (int v = 0; v < n; ++v) {
+        if (adj[node][v] && !visited[v]) {
+            #pragma omp task
+            dfs_parallel(v, n);
+        }
+    }
+}
+
+int main() {
+    int n, start_bfs = 0, start_dfs = 0;
+
+    cout << "Enter number of nodes in the tree: ";
+    cin >> n;
+
+    adj.assign(n, vector<int>(n, 0));
+    visited.assign(n, 0);
+
+    cout << "Enter the parent-child relationships (enter the parent for each node except the root):\n";
+    for (int i = 1; i < n; ++i) {
+        int parent;
+        cout << "Enter the parent of node " << i << ": ";
+        cin >> parent;
+        adj[parent][i] = adj[i][parent] = 1;
+    }
+
+    cout << "BFS Traversal starting from node " << start_bfs << ": ";
+    bfs_parallel(start_bfs, n);
+    cout << endl;
+
+    visited.assign(n, 0);
+    cout << "DFS Traversal starting from node " << start_dfs << ": ";
+
+    #pragma omp parallel
+    {
+        #pragma omp single
+        dfs_parallel(start_dfs, n);
+    }
+
+    cout << endl;
+    return 0;
+}
+
+
+7
+0
+0
+1
+2
+2
+5
+--------------------------------------------------------------------------------------------------------------------------------------------
+
+
+2) Write a program to implement Parallel Bubble Sort and Merge sort using OpenMP. Use existing algorithms and measure the performance of sequential and parallel algorithms.
+
+#include <iostream>
+#include <vector>
+#include <chrono>
+#include <omp.h>
+using namespace std;
+using namespace chrono;
+
+void bubbleSortSeq(vector<int>& a) {
+    for (int i = 0, n = a.size(); i < n-1; ++i)
+        for (int j = 0; j < n-i-1; ++j)
+            if (a[j] > a[j+1]) swap(a[j], a[j+1]);
+}
+
+void bubbleSortPar(vector<int>& a) {
+    int n = a.size();
+    for (int i = 0; i < n; ++i)
+        #pragma omp parallel for
+        for (int j = i % 2; j < n-1; j += 2)
+            if (a[j] > a[j+1]) swap(a[j], a[j+1]);
+}
+
+void merge(vector<int>& a, int l, int m, int r) {
+    vector<int> L(a.begin()+l, a.begin()+m+1), R(a.begin()+m+1, a.begin()+r+1);
+    int i = 0, j = 0, k = l;
+    while (i < L.size() && j < R.size()) a[k++] = (L[i] <= R[j]) ? L[i++] : R[j++];
+    while (i < L.size()) a[k++] = L[i++];
+    while (j < R.size()) a[k++] = R[j++];
+}
+
+void mergeSortSeq(vector<int>& a, int l, int r) {
+    if (l < r) {
+        int m = (l + r) / 2;
+        mergeSortSeq(a, l, m); mergeSortSeq(a, m+1, r);
+        merge(a, l, m, r);
+    }
+}
+
+void mergeSortPar(vector<int>& a, int l, int r) {
+    if (l < r) {
+        int m = (l + r) / 2;
+        #pragma omp task shared(a) mergeSortPar(a, l, m)
+        #pragma omp task shared(a) mergeSortPar(a, m+1, r)
+        #pragma omp taskwait
+        merge(a, l, m, r);
+    }
+}
+
+int main() {
+    int n; cout << "Enter size: "; cin >> n;
+    vector<int> a(n); cout << "Enter " << n << " elements:\n";
+    for (auto& x : a) cin >> x;
+
+    auto timed = [](auto func, vector<int> a, string name) {
+        auto s = high_resolution_clock::now();
+        func(a);
+        auto e = high_resolution_clock::now();
+        cout << name << " Time: " << duration_cast<microseconds>(e - s).count() << " micro_sec\n";
+    };
+
+    timed([&](auto v){ bubbleSortSeq(v); }, a, "Sequential Bubble Sort");
+    timed([&](auto v){ bubbleSortPar(v); }, a, "Parallel Bubble Sort");
+    timed([&](auto v){ mergeSortSeq(v, 0, v.size()-1); }, a, "Sequential Merge Sort");
+
+    vector<int> mergePar = a;
+    auto start = high_resolution_clock::now();
+    #pragma omp parallel
+    {
+        #pragma omp single
+        mergeSortPar(mergePar, 0, mergePar.size()-1);
+    }
+    auto end = high_resolution_clock::now();
+    cout << "Parallel Merge Sort Time: " << duration_cast<microseconds>(end - start).count() << " micro_sec\n";
+
+    cout << "\nSorted Array (Parallel Merge Sort): ";
+    for (int x : mergePar) cout << x << " ";
+    cout << endl;
+}
+
+
+--------------------------------------------------------------------------------------------------------------------------------------------
+
+
+3)Implement Min, Max, Sum and Average operations using Parallel Reduction.
+
+#include <iostream>
+#include <vector>
+#include <omp.h>
+using namespace std;
+
+int main() {
+    int n;
+    cout << "Enter number of elements: ";
+    cin >> n;
+
+    vector<int> arr(n);
+    cout << "Enter " << n << " elements:\n";
+    for (int& x : arr) cin >> x;
+
+    int minVal = arr[0], maxVal = arr[0], sum = 0;
+
+    #pragma omp parallel for reduction(+:sum) reduction(min:minVal) reduction(max:maxVal)
+    for (int i = 0; i < n; ++i) {
+        sum += arr[i];
+        if (arr[i] < minVal) minVal = arr[i];
+        if (arr[i] > maxVal) maxVal = arr[i];
+    }
+
+    double avg = static_cast<double>(sum) / n;
+
+    cout << "\nResults using Parallel Reduction:\n";
+    cout << "Minimum: " << minVal << "\n";
+    cout << "Maximum: " << maxVal << "\n";
+    cout << "Sum:     " << sum << "\n";
+    cout << "Average: " << avg << "\n";
+
+    return 0;
+}
+
+
+
+--------------------------------------------------------------------------------------------------------------------------------------------
+
+4)Write a CUDA Program for Addition of two large vectors
+
+
+#include <iostream>
+#include <cuda_runtime.h>
+
+#define N 1000000  // Size of the vectors
+
+// CUDA kernel for adding two vectors
+__global__ void vectorAdd(int *A, int *B, int *C) {
+    int idx = threadIdx.x + blockIdx.x * blockDim.x;
+    if (idx < N) C[idx] = A[idx] + B[idx];
+}
+
+using namespace std;
+
+int main() {
+    int *A, *B, *C, *d_A, *d_B, *d_C;
+
+    // Allocate and initialize vectors
+    A = new int[N]; B = new int[N]; C = new int[N];
+    for (int i = 0; i < N; i++) { A[i] = i; B[i] = i * 2; }
+
+    // Print first 10 elements of A and B
+    cout << "A: "; for (int i = 0; i < 10; i++) cout << A[i] << " ";
+    cout << "\nB: "; for (int i = 0; i < 10; i++) cout << B[i] << " ";
+    cout << endl;
+
+    // Allocate memory on device
+    cudaMalloc(&d_A, N * sizeof(int)); cudaMalloc(&d_B, N * sizeof(int)); cudaMalloc(&d_C, N * sizeof(int));
+
+    // Copy data from host to device
+    cudaMemcpy(d_A, A, N * sizeof(int), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_B, B, N * sizeof(int), cudaMemcpyHostToDevice);
+
+    // Launch the kernel
+    vectorAdd<<<(N + 255) / 256, 256>>>(d_A, d_B, d_C);
+
+    // Copy the result back to host
+    cudaMemcpy(C, d_C, N * sizeof(int), cudaMemcpyDeviceToHost);
+
+    // Print first 10 elements of result
+    cout << "Result: "; for (int i = 0; i < 10; i++) cout << C[i] << " ";
+    cout << endl;
+
+    // Free memory
+    cudaFree(d_A); cudaFree(d_B); cudaFree(d_C);
+    delete[] A; delete[] B; delete[] C;
+
+    return 0;
+}
+
+--------------------------------------------------------------------------------------------------------------------------------------------
+
+
+5)Write a CUDA Program for Matrix Multiplication using CUDA C.
+
+#include <cuda_runtime.h>
+#include <cstdio>
+
+#define N 3  // Matrix size (3x3)
+
+__global__ void matrixMul(int *A, int *B, int *C) {
+    int row = blockIdx.y * blockDim.y + threadIdx.y;
+    int col = blockIdx.x * blockDim.x + threadIdx.x;
+    if (row < N && col < N) {
+        int sum = 0;
+        for (int k = 0; k < N; k++) {
+            sum += A[row * N + k] * B[k * N + col];
+        }
+        C[row * N + col] = sum;
+    }
+}
+
+int main() {
+    int A[N * N] = {1, 2, 3, 4, 5, 6, 7, 8, 9};  // Example 3x3 matrix A
+    int B[N * N] = {9, 8, 7, 6, 5, 4, 3, 2, 1};  // Example 3x3 matrix B
+    int C[N * N] = {0};  // Resultant matrix C
+    int *d_A, *d_B, *d_C;
+
+    cudaMalloc(&d_A, N * N * sizeof(int));
+    cudaMalloc(&d_B, N * N * sizeof(int));
+    cudaMalloc(&d_C, N * N * sizeof(int));
+
+    cudaMemcpy(d_A, A, N * N * sizeof(int), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_B, B, N * N * sizeof(int), cudaMemcpyHostToDevice);
+
+    dim3 threadsPerBlock(3, 3);
+    matrixMul<<<1, threadsPerBlock>>>(d_A, d_B, d_C);
+
+    cudaMemcpy(C, d_C, N * N * sizeof(int), cudaMemcpyDeviceToHost);
+
+    printf("Matrix A:\n");
+    for (int i = 0; i < N; i++) {
+        for (int j = 0; j < N; j++) {
+            printf("%d ", A[i * N + j]);
+        }
+        printf("\n");
+    }
+
+    printf("Matrix B:\n");
+    for (int i = 0; i < N; i++) {
+        for (int j = 0; j < N; j++) {
+            printf("%d ", B[i * N + j]);
+        }
+        printf("\n");
+    }
+
+    printf("Matrix C (Result):\n");
+    for (int i = 0; i < N; i++) {
+        for (int j = 0; j < N; j++) {
+            printf("%d ", C[i * N + j]);
+        }
+        printf("\n");
+    }
+
+    cudaFree(d_A); cudaFree(d_B); cudaFree(d_C);
+    return 0;
+}
+
+
+--------------------------------------------------------------------------------------------------------------------------
+--------------------------------------------------------------------------------------------------------------------------
+--------------------------------------------------------------------------------------------------------------------------
+1.	 This C++ program performs parallel Breadth-First Search (BFS) and Depth-First Search (DFS) on a tree using OpenMP for parallelism. The user inputs the number of nodes and specifies the parent of each node (excluding the root), forming an undirected tree represented as an adjacency matrix. The bfs_parallel function starts from a given node and explores all reachable nodes level by level, using parallel for-loops to check neighbors and a critical section to safely push nodes into the queue. The dfs_parallel function uses recursive calls with OpenMP tasks to explore as deep as possible along each branch before backtracking. The program resets the visited array between BFS and DFS to ensure correct traversal. It prints the BFS and DFS traversal orders starting from node 0. OpenMP is used to speed up neighbor checks and recursive calls, demonstrating basic parallel graph traversal.
+
+
+2.	This program performs and compares sequential and parallel versions of Bubble Sort and Merge Sort using OpenMP for parallelism. The user enters the size and elements of the array. Each sorting method is timed using chrono to measure execution speed. Parallel Bubble Sort uses even-odd transposition with #pragma omp parallel for, while Parallel Merge Sort uses recursive tasks with #pragma omp task. Only one final sorted array (from Parallel Merge Sort) is shown to avoid redundancy. The goal is to observe performance differences between sequential and parallel sorting. The code is compact, readable, and ideal for comparing CPU-based parallelism.
+
+
+3.	This program calculates the minimum, maximum, sum, and average of an array using parallel reduction with OpenMP. The user inputs the number of elements and the array values. The #pragma omp parallel for directive enables parallel execution of the loop. The reduction clauses combine values computed by different threads: + for sum, min for minimum, and max for maximum. These ensure that the final result is correctly computed across all threads. Once the sum is calculated, the average is obtained by dividing it by the number of elements. This approach speeds up the operations on large datasets by leveraging multi-core CPU processing. The output displays all four computed values.
+
+
+4.	This CUDA program performs the addition of two large vectors in parallel on the GPU. It first allocates and initializes the vectors A and B on the host, with A containing values from 0 to N-1 and B containing values double those in A. It then allocates memory on the device, copies the vectors from host to device, and launches a parallel CUDA kernel to compute the sum of the vectors element-wise in parallel. After the kernel execution, the result is copied back to the host, and the first 10 elements of the result vector C are printed. Finally, memory is freed on both the host and device. The program efficiently handles large vector sizes using parallel processing on the GPU, significantly speeding up the operation compared to a serial CPU approach.
+
+
+5.	This CUDA program performs matrix multiplication for two 3x3 matrices. It initializes two matrices, A and B, with predefined values and allocates memory on both the host (CPU) and device (GPU). The kernel matrixMul computes the multiplication by calculating the dot product of rows from matrix A and columns from matrix B to generate the result matrix C. A 3x3 grid of threads is used for the multiplication, and memory is transferred between the host and device using cudaMemcpy. After computation, the matrices A, B, and the resulting matrix C are printed. Finally, all allocated memory on both the host and device is freed. This demonstrates matrix multiplication using CUDA for small matrices while minimizing the code complexity.
+
+
+
